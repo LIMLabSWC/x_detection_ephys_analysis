@@ -21,20 +21,25 @@ import pandas as pd
 
 from sess_dataclasses import Session, get_predictor_from_psth
 
+
 if __name__ == "__main__":
+    # Take in arguments for the ephys data to be processed
     print('args')
     parser = argparse.ArgumentParser()
-    parser.add_argument('config_file')
-    parser.add_argument('sess_date')
-    parser.add_argument('--sorter_dirname',default='from_concat',required=False)
-    parser.add_argument('--sess_top_tag', default='')
-    parser.add_argument('--sess_top_filts', default='')
-    parser.add_argument('--synth_data',default=0,type=int)
-    parser.add_argument('--rel_sorting_path',default='')
-    parser.add_argument('--ow',default=1,type=int)
+    parser.add_argument('config_file', help='path to config yaml file')
+    parser.add_argument('sess_date', help='session name and date separated by underscore')
+    parser.add_argument('--sorter_dirname',default='from_concat', 
+                        required=False, help='name of sorting output directory (default: %(default)s)')
+    parser.add_argument('--sess_top_tag', default='', help='name of session topology .csv file (default: %(default)s)')
+    parser.add_argument('--sess_top_filts', default='', help='filter for session topology file (default: %(default)s)')
+    parser.add_argument('--synth_data',default=0,type=int, help='toggle use of synthetic data (default: %(default)s)')
+    parser.add_argument('--rel_sorting_path',default='', help='relative path from ephys dir to sorting dir (default: %(default)s)')
+    parser.add_argument('--ow',default=1,type=int, help='toggle overwrite of existing pkl (default: %(default)s)')
 
     args = parser.parse_args()
     print(f'{args = }')
+    
+    # Load configuration file, set up directories for ceph and pickles based on OS
     with open(args.config_file, 'r') as file:
         config = yaml.safe_load(file)
     sys_os = platform.system().lower()
@@ -47,16 +52,21 @@ if __name__ == "__main__":
     # try: gen_metadata(sess_topology_path,ceph_dir,
     #                   col_name='beh_bin',harp_bin_dir='')
     # except OSError: pass
+    
+    # Generate metadata (e.g. trigger times) if not already present
     gen_metadata(sess_topology_path, ceph_dir,
                  col_name='beh_bin', harp_bin_dir='')
     session_topology = pd.read_csv(sess_topology_path)
     # win_rec_dir = r'X:\Dammy\ephys\DO79_2024-01-17_15-20-19_001\Record Node 101\experiment1\recording1'
     name,date = args.sess_date.split('_')
     date = int(date)
+    
+    # Filter session topology based on provided name, date, and any additional filters
     all_sess_info = session_topology.query('name==@name & date==@date').reset_index(drop=True)
     if args.sess_top_filts:
         all_sess_info = all_sess_info.query(args.sess_top_filts)
 
+    # Get sorting directories if present, if not set a default value of 'sorting_no_si_drift', 'kilosort2_5_ks_drift'
     if args.rel_sorting_path:
         dir1_name, dir2_name = Path(args.rel_sorting_path).parts
     else:
@@ -81,13 +91,16 @@ if __name__ == "__main__":
         ephys_figdir.mkdir()
 
     sessions = {}
+    
+    # Set peristimulus time histogram window in seconds
     psth_window = [-2, 3]
     main_sess = session_topology.query('sess_order=="main" & name==@name & date==@date')
     if 'tdata_file' in main_sess.columns:
         main_sess_td_name = posix_from_win(main_sess['tdata_file'].iloc[0],ceph_linux_dir=config['home_dir_linux'])
     else:
         main_sess_td_name = Path(main_sess['sound_bin'].iloc[0].replace('_SoundData', '_TrialData')).with_suffix('.csv').name
-    # get main sess pattern
+    
+    # Get main session pattern, default to [0,0,0,0] if not found
     home_dir = Path(config[f'home_dir_{sys_os}'])
     try:
         main_patterns = get_main_sess_patterns(name,date, main_sess_td_name=main_sess_td_name, home_dir=home_dir)
@@ -96,13 +109,14 @@ if __name__ == "__main__":
 
     main_pattern = main_patterns[0]
     # sort_dirs =
-
+    
     plot_psth_decode = True
     decode_over_time = False
 
     cond_filters = get_all_cond_filts()
     print(f'{main_sess_td_name =}')
 
+    # Loop through each session in the session topology given the filters chosen
     for (_,sess_info) in all_sess_info.iterrows():
         # if sess_info['sess_order'] != 'main':
         #     continue
@@ -122,6 +136,7 @@ if __name__ == "__main__":
         sessname = Path(sess_info['sound_bin']).stem
         sessname = sessname.replace('_SoundData','')
 
+        # Accesses the pickle file if it exists to save time and computational power
         sess_pkl_path = pkl_dir / f'{sessname}.pkl'
         print(f'looking for {sess_pkl_path}')
         if sess_pkl_path.is_file() and not args.ow:
@@ -143,24 +158,35 @@ if __name__ == "__main__":
         sessions[sessname].load_trial_data(get_main_sess_td_df(name,date,main_sess_td_name,home_dir)[1])
         # normal = sessions[sessname].td_df[sessions[sessname].td_df['Tone_Position'] == 0]['PatternID'].iloc[0]
 
+        # Skip stage 2 sessions 
         if sessions[sessname].td_df['Stage'].iloc[0] <=2 and sess_info['sess_order'] == 'main':
             print('stage 2, nothing to analyse')
             continue
+        
+        # (Why do we get a new set of main patterns for each session?)
         main_patterns = get_main_sess_patterns(td_df=sessions[sessname].td_df)
         main_patterns = sorted(main_patterns, key=lambda x: (x[0], np.any(np.diff(x)<=0)))
         print(f'{main_patterns=}')
         patts_by_rule = get_patts_by_rule(main_patterns)
         n_patts_per_rule = max(len(e) for e in patts_by_rule.values())
         print(f'{main_patterns=}')
+        
+        # For stage 3 sessions, set normal patterns to main patterns
         if sessions[sessname].td_df['Stage'].iloc[0] ==3:
             normal_patterns = main_patterns
             if len(normal_patterns) > 1 and sessions[sessname].td_df['Stage'].iloc[0] == 3:
                 warnings.warn(f'{sessname} has more than one normal pattern for stage 3')
+                
+        # For stage 4 sessions, filter normal patterns based on normal experimental conditions
         elif sessions[sessname].td_df['Stage'].iloc[0] == 4:
             normal_patterns = get_main_sess_patterns(
                 td_df=sessions[sessname].td_df.query(cond_filters['normal_exp']))
+            
+        # For stage 5 sessions, select every other pattern as normal patterns
         elif sessions[sessname].td_df['Stage'].iloc[0] == 5:
-            normal_patterns = [e for i, e in enumerate(main_patterns) if i % 2 == 0] # write function for getting rule (sub start ad cnt unique)
+            normal_patterns = [e for i, e in enumerate(main_patterns) if i % 2 == 0] # write function for getting rule (sub start and count unique)
+            
+        # Otherwise, set normal patterns to main patterns
         else:
             normal_patterns = main_patterns
 
@@ -191,9 +217,12 @@ if __name__ == "__main__":
         sessions[sessname].get_event_free_zscore()
         synth_data_flag = args.synth_data if args.synth_data else None
         n_units = len(sessions[sessname].spike_obj.units)
+        
+        # If using synthetic data, set means to zeros, and standard deviations to ones 
         if synth_data_flag:
             sessions[sessname].spike_obj.unit_means = (np.zeros(n_units), np.ones(n_units))
 
+        # Get pip (position in pattern?) indices, descriptions, labels and names
         pip_idxs = {event_lbl: sessions[sessname].sound_event_dict[event_lbl].idx
                     for event_lbl in sessions[sessname].sound_event_dict 
                     if any(char in event_lbl for char in 'ABCD')}
@@ -203,6 +232,8 @@ if __name__ == "__main__":
         sessions[sessname].pip_desc = pip_desc
         # generate patterned unit rates
         # sessions[sessname].get_grouped_rates_by_property(pip_desc,'ptype',0.1)
+        
+        # Get peristimulus time histograms for sound events, save session object as pickle
         sessions[sessname].get_sound_psth(psth_window=psth_window, zscore_flag=False, baseline_dur=0, redo_psth=False,
                                           use_iti_zscore=False, synth_data=synth_data_flag)
         sessions[sessname].pickle_obj(pkl_dir)
