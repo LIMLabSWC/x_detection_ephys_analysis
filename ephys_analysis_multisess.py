@@ -170,15 +170,9 @@ if __name__ == "__main__":
         patts_by_rule = get_patts_by_rule(main_patterns)
         n_patts_per_rule = max(len(e) for e in patts_by_rule.values())
         print(f'{main_patterns=}')
-        
-        # For stage 3 sessions, set normal patterns to main patterns
-        if sessions[sessname].td_df['Stage'].iloc[0] ==3:
-            normal_patterns = main_patterns
-            if len(normal_patterns) > 1 and sessions[sessname].td_df['Stage'].iloc[0] == 3:
-                warnings.warn(f'{sessname} has more than one normal pattern for stage 3')
                 
         # For stage 4 sessions, filter normal patterns based on normal experimental conditions
-        elif sessions[sessname].td_df['Stage'].iloc[0] == 4:
+        if sessions[sessname].td_df['Stage'].iloc[0] == 4:
             normal_patterns = get_main_sess_patterns(
                 td_df=sessions[sessname].td_df.query(cond_filters['normal_exp']))
             
@@ -186,9 +180,11 @@ if __name__ == "__main__":
         elif sessions[sessname].td_df['Stage'].iloc[0] == 5:
             normal_patterns = [e for i, e in enumerate(main_patterns) if i % 2 == 0] # write function for getting rule (sub start and count unique)
             
-        # Otherwise, set normal patterns to main patterns
+        # Otherwise, set normal patterns to main patterns, and throw a warning if multiple normal patterns are found in stage 3 sessions
         else:
             normal_patterns = main_patterns
+            if len(normal_patterns) > 1 and sessions[sessname].td_df['Stage'].iloc[0] == 3:
+                warnings.warn(f'{sessname} has more than one normal pattern for stage 3')
 
         normal = main_pattern
         # normal = [int(pip) for pip in normal.split(';')]
