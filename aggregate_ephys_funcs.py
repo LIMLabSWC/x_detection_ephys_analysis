@@ -24,35 +24,60 @@ from pupil_analysis_funcs import process_pupil_td_data
 from spike_time_utils import zscore_by_trial
 
 
-def load_aggregate_td_df(session_topolgy: pd.DataFrame,home_dir:Path,td_df_query=None) -> pd.DataFrame:
+def load_aggregate_td_df(session_topology: pd.DataFrame, home_dir:Path, td_df_query=None) -> pd.DataFrame:
+    """
+    Loads trial data from multiple sessions, and returns an aggregated dataframe of trial data. 
+
+    Args:
+        session_topolgy (pd.DataFrame): Dataframe containing session information.
+        home_dir (Path): Base directory for resolving relative paths.
+        td_df_query (String, optional): String containing any specific queries to be made for the trial data. Defaults to None.
+
+    Returns:
+        pd.DataFrame: Dataframe containing aggregated trial data from all sessions.
+    """
     from behviour_analysis_funcs import get_main_sess_td_df
-    # get main sess pattern
-    td_path_pattern = 'data/Dammy/<name>/TrialData'
-    if 'tdata_file' not in session_topolgy.columns:
+    
+    # Get main session pattern by getting a list of absolute paths to the trial data
+    td_path_pattern = 'data/Dammy/<name>/TrialData'    # should make this configurable
+    if 'tdata_file' not in session_topology.columns:
         td_paths = [Path(sess_info['sound_bin'].replace('_SoundData', '_TrialData')).with_suffix('.csv').name
-                    for _,sess_info in session_topolgy.iterrows()]
+                    for _,sess_info in session_topology.iterrows()]
         abs_td_paths = [home_dir / td_path_pattern.replace('<name>', sess_info['name']) / td_path
-                        for (td_path, (_, sess_info)) in zip(td_paths, session_topolgy.iterrows())]
+                        for (td_path, (_, sess_info)) in zip(td_paths, session_topology.iterrows())]
 
     else:
-        abs_td_paths = session_topolgy['tdata_file'].to_list()
+        abs_td_paths = session_topology['tdata_file'].to_list()
+    
+    # Load trial data from each session and concatenate into a single dataframe
     sessnames = [Path(sess_info['sound_bin'].replace('_SoundData', '')).stem
-                 for _, sess_info in session_topolgy.iterrows()]
+                 for _, sess_info in session_topology.iterrows()]
     abs_td_paths = [home_dir/posix_from_win(td_path,'/nfs/nhome/live/aonih') if isinstance(td_path,(str,Path)) else None for td_path in abs_td_paths]
     td_dfs = {sessname: get_main_sess_td_df(_main_sess_td_name=abs_td_path,_home_dir=home_dir)[0]
               for sessname, abs_td_path in zip(sessnames, abs_td_paths)
               if abs_td_path is not None
               }
-
     # td_dfs = {sessname:pd.read_csv(abs_td_path) for sessname, abs_td_path in zip(sessnames,abs_td_paths)
     #           if abs_td_path.is_file()}
     td_df = pd.concat(list(td_dfs.values()),keys=td_dfs.keys(),names=['sess'],axis=0)
+    
+    # Apply query filtering if td_df_query is provided
     if td_df_query:
         td_df = td_df.query(td_df_query)
     return td_df
 
 
 def load_aggregate_sessions(pkl_paths, td_df_query=None):
+    """
+    Loads multiple session pickle files and returns an aggregated dictionary of session objects.
+
+    Args:
+        pkl_paths (List): List of paths to the session pickle files.
+        td_df_query (String, optional): String containing any specific queries to be made for the trial data. Defaults to None.
+
+    Returns:
+        dict: A dictionary with session names as keys and session objects as values.
+    """
     sess_objs = []
     for pkl_path in tqdm(pkl_paths, total=len(pkl_paths), desc='loading sessions'):
         print(f'loading {pkl_path}')
@@ -72,13 +97,30 @@ def load_aggregate_sessions(pkl_paths, td_df_query=None):
 
 
 def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, window=(0, 0.25),
-                              pred_from_psth_kwargs=None,zscore_by_trial_flag=False ):
+                              pred_from_psth_kwargs=None, zscore_by_trial_flag=False):
+    """
+    Aggregates event responses across multiple sessions and returns them as a dictionary.
+    
+    Args:
+        sessions (dict): Dictionary of session objects.
+        events (List, optional): List of event responses to use. Defaults to None.
+        events2exclude (List, optional): List of event responses to be excluded. Defaults to None.
+        window (tuple, optional): New window to be used in predictor array retrieved from the PSTH. Defaults to (0, 0.25).
+        pred_from_psth_kwargs (dict, optional): Optional keyword arguments to be used during predictor array retrieval. Defaults to None.
+        zscore_by_trial_flag (bool, optional): Flag to decide if event responses should be z-scored by trial. Defaults to False.
 
+    Raises:
+        NotImplementedError: Throws an error if events is None. 
+
+    Returns:
+        dict: _description_
+    """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
 
     if events is None:
-        raise NotImplementedError
+        raise NotImplementedError    # (why have this if we can just make events mandatory?)
 
+    # Filter sessions to only those that contain all specified events.
     if events:
         sessions2use = [sess for sess, s_events in zip(sessions, events_by_session) if
                         all(e in s_events for e in events)]
@@ -87,14 +129,14 @@ def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, 
 
     if events:
         for sess in copy(sessions2use):
-            if not all([e in list(sessions[sess].sound_event_dict.keys()) for e in events]):
+            if not all([e in list(sessions[sess].sound_event_dict.keys()) for e in events]):    # is this redundant?
                 sessions.pop(sess)
-                sessions2use.remove(sess)
+                sessions2use.remove(sess) # why use a copy above if we remove it from the real thing? maybe so as not to affect it during the for loop?
 
     # if events2exclude:
     #     common_events = [e for e in common_events if e not in events2exclude]
-
-
+    
+    # Create a dictionary of event responses for each session.
     event_responses_across_sessions = {sessname: {e: get_predictor_from_psth(sessions[sessname], e, [-2, 3], window,
                                                                              **pred_from_psth_kwargs if pred_from_psth_kwargs else {})
                                                   for e in events}
@@ -106,6 +148,20 @@ def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, 
 
 
 def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
+    """
+    _summary_
+
+    Args:
+        sessions (dict): _description_
+        events (_type_, optional): _description_. Defaults to None.
+        events2exclude (_type_, optional): _description_. Defaults to None.
+
+    Raises:
+        NotImplementedError: _description_
+
+    Returns:
+        _type_: _description_
+    """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
     # print(f'common events = {common_events}')
 
@@ -625,15 +681,15 @@ def ttest_decoding_results(decode_dfs, key, col1='data_accuracy', col2='shuff_ac
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('config_file')
-    parser.add_argument('pkldir')
-    parser.add_argument('event_responses_pkl')
-    parser.add_argument('--plot_config_path', type=str, default=None)
-    parser.add_argument('--overwrite', action='store_true')
-    parser.add_argument('--by_animal', action='store_true')
-    parser.add_argument('--batch_size', type=int, default=10)
-    parser.add_argument('--multiprocess', action='store_true')
-    parser.add_argument('--skip_batches_if_exist', action='store_true')
+    parser.add_argument('config_file', help='path to config yaml file')
+    parser.add_argument('pkldir', help='path to directory containing pkls') # doesn't seem to actually be used anywhere?
+    parser.add_argument('event_responses_pkl', help='path to save/load event responses pkl')
+    parser.add_argument('--plot_config_path', type=str, default=None, help='path to plot config yaml file')
+    parser.add_argument('--overwrite', action='store_true', help='toggle overwriting of existing pkl')
+    parser.add_argument('--by_animal', action='store_true', help='group sessions by animal when batching')
+    parser.add_argument('--batch_size', type=int, default=10, help='number of sessions per batch')
+    parser.add_argument('--multiprocess', action='store_true', help='use multiprocessing to process batches')
+    parser.add_argument('--skip_batches_if_exist', action='store_true', help='skip batches if batch file already exists')
     return parser.parse_args()
 
 
