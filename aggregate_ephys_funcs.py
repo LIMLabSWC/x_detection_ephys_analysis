@@ -113,7 +113,7 @@ def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, 
         NotImplementedError: Throws an error if events is None. 
 
     Returns:
-        dict: _description_
+        dict: Returns a dictionary of aggregated event responses across sessions.
     """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
 
@@ -149,18 +149,18 @@ def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, 
 
 def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
     """
-    _summary_
+    Aggregates the event features across multiple sessions and returns them as a dictionary.
 
     Args:
-        sessions (dict): _description_
-        events (_type_, optional): _description_. Defaults to None.
-        events2exclude (_type_, optional): _description_. Defaults to None.
+        sessions (dict): A dictionary of session objects to be aggregated.
+        events (List, optional): List of event responses to use. Defaults to None.
+        events2exclude (List, optional): List of event responses to be excluded. Defaults to None.
 
     Raises:
-        NotImplementedError: _description_
+        NotImplementedError: If events is None.
 
     Returns:
-        _type_: _description_
+        dict: A dictionary of aggregated event features (explain what these are!) across sessions.
     """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
     # print(f'common events = {common_events}')
