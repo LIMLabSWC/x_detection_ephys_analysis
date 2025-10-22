@@ -29,12 +29,12 @@ def load_aggregate_td_df(session_topology: pd.DataFrame, home_dir:Path, td_df_qu
     Loads trial data from multiple sessions, and returns an aggregated dataframe of trial data. 
 
     Args:
-        session_topolgy (pd.DataFrame): Dataframe containing session information.
+        session_topolgy (pd.DataFrame): Dataframe containing session paths.
         home_dir (Path): Base directory for resolving relative paths.
         td_df_query (String, optional): String containing any specific queries to be made for the trial data. Defaults to None.
 
     Returns:
-        pd.DataFrame: Dataframe containing aggregated trial data from all sessions.
+        pd.DataFrame: td_df - Aggregated dataframe of trial data across sessions, with hierarchical indexing by session name. 
     """
     from behviour_analysis_funcs import get_main_sess_td_df
     
@@ -52,6 +52,8 @@ def load_aggregate_td_df(session_topology: pd.DataFrame, home_dir:Path, td_df_qu
     # Load trial data from each session and concatenate into a single dataframe
     sessnames = [Path(sess_info['sound_bin'].replace('_SoundData', '')).stem
                  for _, sess_info in session_topology.iterrows()]
+    
+    # Converts Windows paths to POSIX paths if necessary
     abs_td_paths = [home_dir/posix_from_win(td_path,'/nfs/nhome/live/aonih') if isinstance(td_path,(str,Path)) else None for td_path in abs_td_paths]
     td_dfs = {sessname: get_main_sess_td_df(_main_sess_td_name=abs_td_path,_home_dir=home_dir)[0]
               for sessname, abs_td_path in zip(sessnames, abs_td_paths)
@@ -99,7 +101,7 @@ def load_aggregate_sessions(pkl_paths, td_df_query=None):
 def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, window=(0, 0.25),
                               pred_from_psth_kwargs=None, zscore_by_trial_flag=False):
     """
-    Aggregates event responses across multiple sessions and returns them as a dictionary.
+    Aggregates event ephys responses across multiple sessions and returns them as a dictionary.
     
     Args:
         sessions (dict): Dictionary of session objects.
@@ -113,7 +115,7 @@ def aggregate_event_responses(sessions: dict, events=None, events2exclude=None, 
         NotImplementedError: Throws an error if events is None. 
 
     Returns:
-        dict: Returns a dictionary of aggregated event responses across sessions.
+        dict: Returns a dictionary of aggregated event responses across sessions, with session names as keys and event response dictionaries as values.
     """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
 
@@ -153,14 +155,14 @@ def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
 
     Args:
         sessions (dict): A dictionary of session objects to be aggregated.
-        events (List, optional): List of event responses to use. Defaults to None.
-        events2exclude (List, optional): List of event responses to be excluded. Defaults to None.
+        events (List, optional): List of events to use. Defaults to None.
+        events2exclude (List, optional): List of events to be excluded. Defaults to None.
 
     Raises:
         NotImplementedError: If events is None.
 
     Returns:
-        dict: A dictionary of aggregated event features (explain what these are!) across sessions.
+        dict: A dictionary of aggregated event features, such as trial information, across sessions.
     """
     events_by_session = [list(sess.sound_event_dict.keys()) for sess in sessions.values()]
     # print(f'common events = {common_events}')
@@ -168,6 +170,7 @@ def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
     if events is None:
         raise NotImplementedError
 
+    # Filter sessions to only those that contain all specified events.
     if events:
         sessions2use = [sess for sess, s_events in zip(sessions, events_by_session) if all(e in s_events for e in events)]
     else:
@@ -180,7 +183,8 @@ def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
                 sessions2use.remove(sess)
     if len(sessions2use) == 0:
         return {}
-
+    
+    # Create a dictionary of event features for each session.
     event_features_across_sessions = {sessname: {e: {'times': sessions[sessname].sound_event_dict[e].times.values,
                                                      'trial_nums': sessions[sessname].sound_event_dict[e].trial_nums, }
                                                  for e in events}
@@ -196,7 +200,20 @@ def aggregate_event_features(sessions: dict, events=None, events2exclude=None):
 
 
 def concatenate_responses_by_td(responses_by_sess: dict, features_by_sess: dict, td_df_query=None):
+    """
+    Groups event responses and features across sessions by trial data, returning a dictionary of concatenated responses.
+
+    Args:
+        responses_by_sess (dict): Dictionary of event responses by session.
+        features_by_sess (dict): Dictionary of event features by session.
+        td_df_query (str, optional): Optional string containing query for trial data. Defaults to None.
+
+    Returns:
+        dict: Dictionary of concatenated event responses grouped by trial data, keyed by event name.
+    """
     grouped_by_td = {}
+    
+    # Find common events across all sessions in responses_by_sess
     common_events = set.intersection(*[set(list(e.keys())) for e in responses_by_sess.values()])
     for event in tqdm(common_events, total=len(common_events), desc='Concatenating responses'):
         event_across_sess = [sess_responses[event][:len(sess_features[event]['td_df'])] for sess_responses,sess_features
@@ -215,7 +232,7 @@ def concatenate_responses_by_td(responses_by_sess: dict, features_by_sess: dict,
 
 
 def group_ephys_resps(event_name:str,responses_by_sess: dict, features_by_sess: dict, td_df_query=None,
-                      trial_nums2use=None,sess_list=None):
+                      trial_nums2use=None, sess_list=None):
     resps_across_sess = {}
     trial_nums = {}
     for sess in sess_list if sess_list else responses_by_sess:
@@ -261,6 +278,7 @@ def get_responses_by_pip_and_condition(pip_names, event_responses, event_feature
                                        zip_pip_conds=False):
     """
     Returns a dictionary with keys '{pip}_{cond}' and values as dicts: {sessname: response array}.
+    
     Args:
         pip_names (list): List of pip event names (e.g. ['A-0', 'B-0']).
         event_responses (dict): Nested dict of session -> event -> response arrays.
@@ -413,7 +431,6 @@ def predict_over_sliding_t(dec_model,resps_dict,pips2predict,window_s,resp_windo
             pass
 
     return dec_model.predict(responses[:,:,window_size:])
-
 
 
 def load_or_generate_event_responses(args, **kwargs):
