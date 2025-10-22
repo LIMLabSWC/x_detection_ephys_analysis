@@ -434,6 +434,19 @@ def predict_over_sliding_t(dec_model,resps_dict,pips2predict,window_s,resp_windo
 
 
 def load_or_generate_event_responses(args, **kwargs):
+    """
+    Loads or generates event responses and features based on provided arguments by batches.
+
+    Args:
+        args (ArgumentParser): Arguments from the below parse_args function.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        dict: merged_event_responses - Dictionary of merged event responses across sessions.
+        dict: merged_event_features - Dictionary of merged event features across sessions.
+    """
+    
+    # Load config file for paths
     sys_os = platform.system().lower()
     with open(args.config_file, 'r') as file:
         config = yaml.safe_load(file)
@@ -449,7 +462,7 @@ def load_or_generate_event_responses(args, **kwargs):
             with open(plot_config_path, 'r') as f:
                 plot_config = yaml.safe_load(f)
 
-    # Get config options
+    # Get config options from plot_config, defaults to hardcoded values otherwise
     session_topology_paths = plot_config.get('session_topology_paths',
                                              [r'X:\Dammy\Xdetection_mouse_hf_test\session_topology_ephys_2401.csv'])
     session_topology_paths = [ceph_dir/ posix_from_win(sess_top_path) for sess_top_path in session_topology_paths]
@@ -478,11 +491,11 @@ def load_or_generate_event_responses(args, **kwargs):
     #     event_features = joblib.load(event_features_path)
     #     return event_responses, event_features
 
-    # Load session topology
+    # Load session topology dataframe
     session_topology = pd.concat([pd.read_csv(sess_top_path) for sess_top_path in session_topology_paths])
     all_sess_info = session_topology.query(sess_top_query)
 
-    # Determine td_df_query if cond_filter used
+    # Determine td_df_query if cond_filter used in plot_config
     cond_filters = get_all_cond_filts()
     all_sess_td_df = load_aggregate_td_df(all_sess_info, home_dir,)
     if td_df_query:
@@ -493,14 +506,14 @@ def load_or_generate_event_responses(args, **kwargs):
     sessions2use = sorted(all_sess_td_df.index.get_level_values('sess').unique().tolist())
     print(sessions2use)
 
-    # log missing pkls:
+    # Log missing pickle files if not found within pkldir
     sess_in_pkl_dir = [e.stem for e in list(pkldir.iterdir())]
     missing_sessions = [sess for sess in sessions2use if sess not in sess_in_pkl_dir]
-    # save to txt file
+    # Save missing pickle files to .txt file
     pd.Series(missing_sessions).to_csv(f'missing_sessions_{cond_filter}.csv')
     sessions2use = sorted([sess for sess in sessions2use if not any([e in sess for e in ['DO82','DO97_250530']])])
 
-    # Group sessions
+    # Batch sessions either by animal or by a specific size
     if by_animal:
         from collections import defaultdict
         grouped_sess = defaultdict(list)
@@ -535,21 +548,22 @@ def load_or_generate_event_responses(args, **kwargs):
     # Remove empty batches
     batch_outputs = [b for b in batch_outputs if b is not None]
     batch_event_responses = [b[0] for b in batch_outputs]
-
     batch_event_features = [b[1] for b in batch_outputs]
 
+    # Checks if the lengths of both batch outputs are equal
     assert len(batch_event_responses) == len(batch_event_features)
-    # Merge batch outputs
+    
+    # Merge batch responses outputs
     all_keys = set()
     for b in batch_event_responses:
-        all_keys.update(b.keys())
+        all_keys.update(b.keys())       # What is this doing?
 
     merged_event_responses = {}
     for b in batch_event_responses:
         for k in b:
             merged_event_responses[k] = b[k]
 
-    # Save merged results
+    # Save merged results as a .joblib file
     joblib.dump(merged_event_responses,event_responses_pkl_path.with_suffix('.joblib'))
 
     # Regenerate features from merged sessions
@@ -699,7 +713,7 @@ def ttest_decoding_results(decode_dfs, key, col1='data_accuracy', col2='shuff_ac
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('config_file', help='path to config yaml file')
-    parser.add_argument('pkldir', help='path to directory containing pkls') # doesn't seem to actually be used anywhere?
+    parser.add_argument('pkldir', help='path to directory containing pkls')
     parser.add_argument('event_responses_pkl', help='path to save/load event responses pkl')
     parser.add_argument('--plot_config_path', type=str, default=None, help='path to plot config yaml file')
     parser.add_argument('--overwrite', action='store_true', help='toggle overwriting of existing pkl')
